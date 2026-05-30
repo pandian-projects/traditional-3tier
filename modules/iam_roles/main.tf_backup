@@ -1,0 +1,123 @@
+############################################
+# IAM ROLE CONFIGURATION
+############################################
+
+locals {
+
+  iam_roles = {
+
+    role_a = {
+      role_name = "lambda_custom_role"
+
+      service = "lambda.amazonaws.com"
+
+      policies = [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+        "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+      ]
+    }
+
+    role_b = {
+      role_name = "ec2_custom_role"
+
+      service = "ec2.amazonaws.com"
+
+      policies = [
+        "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess",
+        "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
+      ]
+    }
+
+    role_c = {
+      role_name = "eventbridge_custom_role"
+
+      service = "events.amazonaws.com"
+
+      policies = [
+        "arn:aws:iam::aws:policy/AWSLambda_FullAccess",
+        "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
+      ]
+    }
+
+    role_d = {
+      role_name = "ecs_custom_role"
+
+      service = "ecs-tasks.amazonaws.com"
+
+      policies = [
+        "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess",
+        "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
+      ]
+    }
+  }
+}
+
+############################################
+# TRUST POLICY DOCUMENTS
+############################################
+
+data "aws_iam_policy_document" "assume_role_policy" {
+
+  for_each = local.iam_roles
+
+  statement {
+
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = [each.value.service]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+############################################
+# CREATE IAM ROLES
+############################################
+
+resource "aws_iam_role" "roles" {
+
+  for_each = local.iam_roles
+
+  name = each.value.role_name
+
+  assume_role_policy = data.aws_iam_policy_document.assume_role_policy[each.key].json
+}
+
+############################################
+# FLATTEN ROLE-POLICY ATTACHMENTS
+############################################
+
+locals {
+
+  role_policy_attachments = flatten([
+
+    for role_key, role_value in local.iam_roles : [
+
+      for policy_arn in role_value.policies : {
+
+        role_key   = role_key
+        policy_arn = policy_arn
+      }
+    ]
+  ])
+}
+
+############################################
+# ATTACH POLICIES TO ROLES
+############################################
+
+resource "aws_iam_role_policy_attachment" "attachments" {
+
+  for_each = {
+
+    for attachment in local.role_policy_attachments :
+
+    "${attachment.role_key}-${attachment.policy_arn}" => attachment
+  }
+
+  role       = aws_iam_role.roles[each.value.role_key].name
+  policy_arn = each.value.policy_arn
+}
